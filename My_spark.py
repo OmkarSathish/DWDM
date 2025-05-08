@@ -3,202 +3,214 @@ import os
 import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from typing import Dict, Any
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, DateType
+from typing import Dict, Any, List, Optional
 import logging
-from pyspark.sql.types import StructType, StructField, StringType
+from datetime import datetime
+from pathlib import Path
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Define the base URLs
-base_url_1 = "https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/{}/99495199999.csv"
-base_url_2 = "https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/{}/72429793812.csv"
+BASE_URLS = {
+    "72421093814": "https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/{}/7241093814.csv",
+    "99495199999": "https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/{}/99495199999.csv",
+    "72429793812": "https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/{}/72429793812.csv"
+}
 
-def get_data():
-    # Define the range of years
-    years = range(2015, 2025)
+WEATHER_SCHEMA = StructType([
+    StructField("STATION", StringType(), True),
+    StructField("DATE", DateType(), True),
+    StructField("LATITUDE", DoubleType(), True),
+    StructField("LONGITUDE", DoubleType(), True),
+    StructField("ELEVATION", DoubleType(), True),
+    StructField("NAME", StringType(), True),
+    StructField("TEMP", DoubleType(), True),
+    StructField("DEWP", DoubleType(), True),
+    StructField("SLP", DoubleType(), True),
+    StructField("STP", DoubleType(), True),
+    StructField("VISIB", DoubleType(), True),
+    StructField("WDSP", DoubleType(), True),
+    StructField("MXSPD", DoubleType(), True),
+    StructField("GUST", DoubleType(), True),
+    StructField("MAX", DoubleType(), True),
+    StructField("MIN", DoubleType(), True),
+    StructField("PRCP", DoubleType(), True),
+    StructField("SNDP", DoubleType(), True),
+    StructField("FRSHTT", StringType(), True)
+])
 
-    # Base directory to save the downloaded files
-    base_output_dir = "./weather_data/"
+INVALID_VALUES = {
+    "TEMP": 9999.9,
+    "DEWP": 9999.9,
+    "SLP": 9999.9,
+    "STP": 9999.9,
+    "VISIB": 999.9,
+    "WDSP": 999.9,
+    "MXSPD": 999.9,
+    "GUST": 999.9,
+    "MAX": 9999.9,
+    "MIN": 9999.9,
+    "PRCP": 99.99,
+    "SNDP": 999.9
+}
 
-    # Loop through each year and download the CSV files for both datasets
-    for year in years:
-        # Create a directory for each year
-        year_dir = os.path.join(base_output_dir, str(year))
-        os.makedirs(year_dir, exist_ok=True)
+class WeatherDataProcessor:
+    def __init__(self, spark: SparkSession):
+        self.spark = spark
+        self.base_input_dir = Path("./weather_data")
+        self.base_output_dir = Path("./cleaned_weather_data")
         
-        # Download each file (Florida and Cincinnati)
-        for base_url, station_id in [(base_url_1, "99495199999"), (base_url_2, "72429793812")]:
-            url = base_url.format(year)
-            response = requests.get(url)
-            
-            # Check if the request was successful
-            if response.status_code == 200:
-                # Save the file in the appropriate year directory
-                file_path = os.path.join(year_dir, f"{station_id}.csv")
+    def download_data(self, year: int) -> None:
+        year_dir = self.base_input_dir / str(year)
+        year_dir.mkdir(parents=True, exist_ok=True)
+        
+        for station_id, url_template in BASE_URLS.items():
+            url = url_template.format(year)
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                
+                file_path = year_dir / f"{station_id}.csv"
                 with open(file_path, "wb") as file:
                     file.write(response.content)
-                print(f"Downloaded: {file_path}")
-            else:
-                print(f"Failed to download {url}. Status code: {response.status_code}")
-
-
-# get_data()
-
-
-def clean_data():
-# Define the base input and output directories
-    base_input_dir = "./weather_data/"
-    base_output_dir = "./cleaned_weather_data/"
-
-    # Define the invalid value representations
-    invalid_values = {
-    #     "TEMP": 9999.9,
-    #     "DEWP": 9999.9,
-    #     "SLP": 9999.9,
-    #     "STP": 9999.9,
-    #     "VISIB": 999.9,
-    #     "WDSP": 999.9,
-        "MXSPD": 999.9,
-    #     "GUST": 999.9,
-        "MAX": 9999.9,
-    #     "MIN": 9999.9,
-    #     "PRCP": 99.99,
-    #     "SNDP": 999.9
-    }
-
-    # Loop through each year directory
-    for year in range(2015, 2025):
-        year_dir = os.path.join(base_input_dir, str(year))
-        
-        # Check if the year directory exists
-        if os.path.exists(year_dir):
-            # Loop through each file in the year directory
-            for station_id in ["99495199999", "72429793812"]:
-                file_path = os.path.join(year_dir, f"{station_id}.csv")
+                logger.info(f"Downloaded: {file_path}")
+            except requests.RequestException as e:
+                logger.error(f"Failed to download {url}: {str(e)}")
                 
-                # Check if the file exists
-                if os.path.exists(file_path):
-                    # Read the CSV file into a DataFrame
-                    df = pd.read_csv(file_path)
-                    
-                    # Filter out rows with invalid values
-                    for column, invalid_value in invalid_values.items():
-                        df = df[df[column] != invalid_value]
-                    
-                    # Create the output directory for the year if it doesn't exist
-                    output_year_dir = os.path.join(base_output_dir, str(year))
-                    os.makedirs(output_year_dir, exist_ok=True)
-                    
-                    # Save the cleaned DataFrame to the new directory
-                    cleaned_file_path = os.path.join(output_year_dir, f"{station_id}.csv")
-                    df.to_csv(cleaned_file_path, index=False)
-                    print(f"Cleaned data saved to: {cleaned_file_path}")
-                else:
-                    print(f"File not found: {file_path}")
-        else:
-            print(f"Year directory not found: {year_dir}")
+    def clean_data(self, year: int) -> None:
+        year_dir = self.base_input_dir / str(year)
+        output_year_dir = self.base_output_dir / str(year)
+        output_year_dir.mkdir(parents=True, exist_ok=True)
+        
+        for station_id in BASE_URLS.keys():
+            file_path = year_dir / f"{station_id}.csv"
+            if not file_path.exists():
+                logger.warning(f"File not found: {file_path}")
+                continue
+                
+            try:
+                df = self.spark.read.csv(
+                    str(file_path),
+                    header=True,
+                    schema=WEATHER_SCHEMA,
+                    dateFormat="yyyy-MM-dd"
+                )
+                
+                cleaned_df = self._clean_dataframe(df)
+                
+                output_path = output_year_dir / f"{station_id}.csv"
+                cleaned_df.write.csv(
+                    str(output_path),
+                    header=True,
+                    mode="overwrite"
+                )
+                logger.info(f"Cleaned data saved to: {output_path}")
+                
+            except Exception as e:
+                logger.error(f"Error processing {file_path}: {str(e)}")
+                
+    def _clean_dataframe(self, df) -> Any:
+        for column, invalid_value in INVALID_VALUES.items():
+            if column in df.columns:
+                df = df.filter(F.col(column) != invalid_value)
+        
+        numeric_columns = [field.name for field in WEATHER_SCHEMA.fields 
+                         if isinstance(field.dataType, DoubleType)]
+        
+        for column in numeric_columns:
+            if column in df.columns:
+                df = df.fillna({column: 0.0})
+        
+        return df
+    
+    def analyze_data(self, year: int) -> Dict[str, Any]:
+        year_dir = self.base_output_dir / str(year)
+        if not year_dir.exists():
+            return {}
+            
+        analysis_results = {}
+        
+        for station_id in BASE_URLS.keys():
+            file_path = year_dir / f"{station_id}.csv"
+            if not file_path.exists():
+                continue
+                
+            try:
+                df = self.spark.read.csv(
+                    str(file_path),
+                    header=True,
+                    schema=WEATHER_SCHEMA,
+                    dateFormat="yyyy-MM-dd"
+                )
+                
+                stats = df.select([
+                    F.avg("TEMP").alias("avg_temp"),
+                    F.max("TEMP").alias("max_temp"),
+                    F.min("TEMP").alias("min_temp"),
+                    F.avg("PRCP").alias("avg_precip"),
+                    F.sum("PRCP").alias("total_precip"),
+                    F.avg("WDSP").alias("avg_wind_speed"),
+                    F.max("MXSPD").alias("max_wind_speed")
+                ]).collect()[0]
+                
+                analysis_results[station_id] = {
+                    "avg_temp": stats["avg_temp"],
+                    "max_temp": stats["max_temp"],
+                    "min_temp": stats["min_temp"],
+                    "avg_precip": stats["avg_precip"],
+                    "total_precip": stats["total_precip"],
+                    "avg_wind_speed": stats["avg_wind_speed"],
+                    "max_wind_speed": stats["max_wind_speed"]
+                }
+                
+            except Exception as e:
+                logger.error(f"Error analyzing {file_path}: {str(e)}")
+                
+        return analysis_results
 
-def create_spark_session(app_name: str = "WeatherDataCount") -> SparkSession:
-    """Create and configure a Spark session with optimized settings."""
+def create_spark_session(app_name: str = "WeatherDataProcessor") -> SparkSession:
     return (
         SparkSession.builder
         .appName(app_name)
-        .config("spark.sql.shuffle.partitions", "4")  # Optimize for small datasets
+        .config("spark.sql.shuffle.partitions", "4")
         .config("spark.driver.memory", "2g")
         .config("spark.executor.memory", "2g")
-        .config("spark.driver.extraJavaOptions", "-Djava.security.manager=allow")
-        .config("spark.sql.debug.maxToStringFields", "1000")  # Increase field limit
+        .config("spark.sql.debug.maxToStringFields", "1000")
+        .config("spark.sql.legacy.timeParserPolicy", "LEGACY")
         .getOrCreate()
     )
 
-def get_dataset_counts(spark: SparkSession, base_path: str) -> Dict[str, int]:
-    """Count records in each weather dataset."""
-    dataset_counts = {}
-    
-    # Define schema for better performance
-    schema = StructType([
-        StructField("STATION", StringType(), True),
-        StructField("DATE", StringType(), True),
-        StructField("NAME", StringType(), True),
-        # Add other fields as needed
-    ])
-    
-    for year in range(2015, 2025):
-        for station_code in ['99495199999', '72429793812']:
-            file_path = os.path.join(base_path, str(year), f"{station_code}.csv")
-            if os.path.exists(file_path):
-                try:
-                    df = spark.read.csv(
-                        file_path,
-                        header=True,
-                        schema=schema,
-                        inferSchema=False  # Use predefined schema for better performance
-                    )
-                    count = df.count()
-                    dataset_counts[f"{year}/{station_code}"] = count
-                    logger.info(f"Processed {file_path}: {count} records")
-                except Exception as e:
-                    logger.error(f"Error processing {file_path}: {str(e)}")
-            else:
-                logger.warning(f"File not found: {file_path}")
-    
-    return dataset_counts
-
-def main():
-    base_path = "./weather_data/"
-    
-    # Use context manager for SparkSession
+def get_data():
     with create_spark_session() as spark:
-        try:
-            # Get dataset counts
-            dataset_counts = get_dataset_counts(spark, base_path)
-            
-            # Log results
-            for dataset, count in dataset_counts.items():
-                logger.info(f"Dataset: {dataset}, Count: {count}")
-            
-            # Initialize a dictionary to store the hottest days per year
-            hottest_days = {}
-            
-            # Loop through the years to find the hottest day
-            for year in range(2015, 2025):
-                year_dir = os.path.join("./cleaned_weather_data/", str(year))
-                for filename in os.listdir(year_dir):
-                    if filename.endswith('.csv'):
-                        # Read the CSV file into a DataFrame
-                        df = spark.read.csv(os.path.join(year_dir, filename), header=True, inferSchema=True)
-                        
-                        # Check if the DataFrame is empty
-                        if df.isEmpty():
-                            continue  # Skip to the next file
-                        
-                        # Check if the "MAX" column exists
-                        if "MAX" not in df.columns:
-                            print(f"The 'MAX' column does not exist in {filename}.")
-                            continue  # Skip to the next file
-                        
-                        # Find the hottest day for the current DataFrame
-                        max_day = df.orderBy(F.desc("MAX")).first()
-                        
-                        # Check if max_day is None
-                        if max_day is not None:
-                            # Store the hottest day only if the year is not already recorded
-                            if year not in hottest_days:
-                                hottest_days[year] = (max_day.STATION, max_day.NAME, max_day.DATE, max_day.MAX)
-            
-            # Convert results to a DataFrame for display
-            if hottest_days:
-                hottest_days_list = [(year, *data) for year, data in hottest_days.items()]
-                hottest_days_df = spark.createDataFrame(hottest_days_list, ["YEAR", "STATION", "NAME", "DATE", "MAX"])
-                hottest_days_df.show()
-            else:
-                print("No hottest days found across the datasets.")
-                
-        except Exception as e:
-            logger.error(f"An error occurred: {str(e)}")
-            raise
+        processor = WeatherDataProcessor(spark)
+        for year in range(2015, 2025):
+            processor.download_data(year)
+
+def clean_data():
+    with create_spark_session() as spark:
+        processor = WeatherDataProcessor(spark)
+        for year in range(2015, 2025):
+            processor.clean_data(year)
+
+def analyze_weather_data():
+    with create_spark_session() as spark:
+        processor = WeatherDataProcessor(spark)
+        all_analysis = {}
+        for year in range(2015, 2025):
+            year_analysis = processor.analyze_data(year)
+            if year_analysis:
+                all_analysis[year] = year_analysis
+        return all_analysis
 
 if __name__ == "__main__":
-    main()
+    analysis_results = analyze_weather_data()
+    for year, results in analysis_results.items():
+        logger.info(f"\nAnalysis for year {year}:")
+        for station, stats in results.items():
+            logger.info(f"\nStation {station}:")
+            for metric, value in stats.items():
+                logger.info(f"{metric}: {value}")

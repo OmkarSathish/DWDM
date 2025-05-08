@@ -32,7 +32,6 @@ else:
 @st.cache_data
 def load_data():
     data = []
-    # Define the invalid value representations
     invalid_values = {
         "MXSPD": 999.9,
         "MAX": 9999.9,
@@ -41,25 +40,23 @@ def load_data():
     for year in range(2015, 2025):
         year_dir = f"./cleaned_weather_data/{year}"
         if not os.path.exists(year_dir):
-            continue  # Skip if year directory doesn't exist
+            continue
             
         files = glob.glob(f"{year_dir}/*.csv")
-        if not files:  # Skip if no files found for this year
+        if not files:
             continue
             
         for file in files:
             try:
                 df = pd.read_csv(file)
-                if df.empty:  # Skip empty dataframes
+                if df.empty:
                     continue
-                    
-                # Filter out rows with invalid values
+                
                 for column, invalid_value in invalid_values.items():
                     if column in df.columns:
                         df = df[df[column] != invalid_value]
                 
                 df['YEAR'] = year
-                # Ensure required columns exist
                 required_columns = ['STATION', 'DATE', 'TEMP', 'MAX', 'MIN', 'NAME']
                 if all(col in df.columns for col in required_columns):
                     data.append(df)
@@ -72,7 +69,7 @@ def load_data():
     
     if not data:
         st.error("No valid data found. Please ensure the data files exist in the correct format.")
-        return pd.DataFrame()  # Return empty dataframe if no valid data
+        return pd.DataFrame()
     
     return pd.concat(data, ignore_index=True)
 
@@ -96,7 +93,7 @@ year_range = st.sidebar.slider(
     value=(2015, 2024)
 )
 
-# Station selector
+# Location selector
 stations = df['STATION'].unique()
 selected_stations = st.sidebar.multiselect(
     "Select Weather Stations",
@@ -191,7 +188,7 @@ with tab2:
         )
         st.plotly_chart(fig_wind, use_container_width=True)
 
-        # Maximum wind speed by station
+        # Maximum wind speed by location
         fig_max_wind = px.bar(
             filtered_df.groupby('STATION')['MXSPD'].max().reset_index(),
             x='STATION',
@@ -281,7 +278,7 @@ with tab4:
     st.write("### Selected Columns Statistics")
     st.dataframe(filtered_df[selected_columns].describe())
     
-    # Station information
+    # Location information
     st.write("### Station Information")
     station_info = filtered_df.groupby('STATION').agg({
         'NAME': 'first',
