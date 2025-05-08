@@ -4,6 +4,7 @@ import plotly.express as px
 import os
 import glob
 from My_spark import get_data, clean_data
+import numpy as np
 
 # Set page config
 st.set_page_config(page_title="Weather Data Analysis", layout="wide")
@@ -11,14 +12,21 @@ st.set_page_config(page_title="Weather Data Analysis", layout="wide")
 # Title
 st.title("🌤️ Weather Data Analysis Dashboard")
 
-# Download data with loading state
-with st.spinner("Downloading weather data... This may take a few minutes."):
-    get_data()
-    st.success("Data download completed!")
+# Check if weather_data directory exists
+if not os.path.exists("./weather_data"):
+    with st.spinner("Downloading weather data... This may take a few minutes."):
+        get_data()
+        st.success("Data download completed!")
+else:
+    st.info("Weather data directory already exists. Skipping download.")
 
-with st.spinner("Cleaning weather data... This may take a few minutes."):
-    clean_data()
-    st.success("Data cleaning completed!")
+# Check if cleaned_weather_data directory exists
+if not os.path.exists("./cleaned_weather_data"):
+    with st.spinner("Cleaning weather data... This may take a few minutes."):
+        clean_data()
+        st.success("Data cleaning completed!")
+else:
+    st.info("Cleaned weather data directory already exists. Skipping cleaning process.")
 
 # Function to load data
 @st.cache_data
@@ -114,7 +122,12 @@ filtered_df = df[
 st.header("Weather Data Analysis")
 
 # Create tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Temperature Analysis", "Wind Analysis", "Precipitation Analysis", "Data Summary"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Temperature Analysis", 
+    "Wind Analysis", 
+    "Precipitation Analysis", 
+    "Data Summary"
+])
 
 with tab1:
     col1, col2 = st.columns(2)
