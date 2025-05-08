@@ -1,0 +1,4 @@
+venv
+weather_data
+cleaned_weather_data
+__pycache__
